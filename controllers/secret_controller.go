@@ -1,29 +1,13 @@
-/*
-
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-*/
-
 package controllers
 
 import (
 	"context"
-	"k8s.io/apimachinery/pkg/types"
-	_ "strings"
+	"errors"
+	"os"
+	"reflect"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/tools/record"
-	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
@@ -34,89 +18,116 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	b64 "encoding/base64"
-
 	serverv1alpha1 "github.com/naveensrinivasan/api/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 )
 
-// SecretReconciler reconciles a Secret object
-type SecretReconciler struct {
+const TargetSecretName = "dockerpullsecret"
+
+// SecretReconcile reconciles a Secret object
+type SecretReconcile struct {
 	client.Client
 	Log           logr.Logger
 	Scheme        *runtime.Scheme
 	EventRecorder record.EventRecorder
 }
 
+var namespaceLabels map[string]string
+
+func init() {
+	namespaceLabels = map[string]string{"inject-docker-secret": "true"}
+}
+
+const dockersecret = "dockersecret"
+
 // +kubebuilder:rbac:groups=server.naveensrinivasan.dev,resources=secrets,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=server.naveensrinivasan.dev,resources=secrets/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=core,resources=secret,verbs=list;watch;get;patch;create
 // +kubebuilder:rbac:groups=apps,resources=namespace,verbs=list;watch;get;update
 
-func (r *SecretReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
+func (r *SecretReconcile) Reconcile(req ctrl.Request) (ctrl.Result, error) {
+	// This is MY_POD_NAMESPACE should have been set by the downward API to identify the namespace which this controller is running from
+	MyPodNamespace := GetEnvDefault("MY_POD_NAMESPACE", "")
+	if len(MyPodNamespace) == 0 {
+		return ctrl.Result{}, apierrors.NewInternalError(errors.New("the env variable MY_POD_NAMESPACE hasn't been set"))
+	}
+
 	ctx := context.Background()
 	log := r.Log.WithValues("secret", req.NamespacedName)
-	const DockerPullSecret = "dockersecret"
+	log.Info("In the reconcile")
 
 	var sec serverv1alpha1.Secret
 	if err := r.Get(ctx, req.NamespacedName, &sec); err != nil {
 		if apierrors.IsNotFound(err) {
-
 			// This is the case where the namespace is just created and watch event kicks in.
 			if req.Namespace == "" {
-				o := metav1.ObjectMeta{Namespace: req.Name, Name: DockerPullSecret}
-
-				r.Create(ctx, &serverv1alpha1.Secret{
-					ObjectMeta: o,
-				})
+				log.Info("Scheduling for namespace", "namespace", req.Name)
+				o := metav1.ObjectMeta{Namespace: req.Name, Name: dockersecret}
+				err := r.Create(ctx, &serverv1alpha1.Secret{ObjectMeta: o})
+				if err != nil {
+					log.Error(err, "Error in scheduling for the namespace")
+					return ctrl.Result{}, err
+				}
 				log.Info("scheduled for namespace", "namespace", req.Name)
 				return ctrl.Result{}, nil
 			}
-			return ctrl.Result{}, nil
+			return ctrl.Result{}, client.IgnoreNotFound(err)
 		}
 		log.Info("error", "error", err)
-		return ctrl.Result{}, client.IgnoreNotFound(err)
-	}
-	secret, err := r.desiredSecret(sec)
-	if err != nil {
-		return ctrl.Result{}, err
-	}
-	foundSecret := &corev1.Secret{}
-	err = r.Get(ctx, types.NamespacedName{Name: sec.Name, Namespace: sec.Namespace}, foundSecret)
-	if err != nil && apierrors.IsNotFound(err) {
-		log.Info("Creating Secret", "namespace", sec.Namespace, "name", sec.Name)
-		err = r.Create(ctx, &secret)
-		if err != nil {
-			log.Error(err, "unable to create Secret")
-			return ctrl.Result{}, err
-		} else {
-			return ctrl.Result{Requeue: true}, nil
-		}
-	} else if err != nil {
-		log.Error(err, "error getting Secret")
 		return ctrl.Result{}, err
 	}
 
-	log.Info("reconciled Secret", "namespace", req.Namespace)
+	storeSecret := corev1.Secret{}
+	// This is the secret that would be created in every namespace
+	log.Info("Looking for the original docker secret", "namespace", MyPodNamespace)
+	if err := r.Get(ctx, client.ObjectKey{Name: dockersecret, Namespace: MyPodNamespace}, &storeSecret); err != nil {
+		if apierrors.IsNotFound(err) {
+			return ctrl.Result{}, errors.New("docker secret not found")
+		}
+	}
+
+	if err := r.Get(ctx, client.ObjectKey{Name: TargetSecretName, Namespace: req.Namespace}, &storeSecret); err != nil {
+		if apierrors.IsNotFound(err) {
+			result, err2 := r.createDockerSecret(log, sec, ctx, storeSecret)
+			if err2 != nil {
+				return result, err2
+			}
+			log.Info("Created Secret", "namespace", req.Namespace)
+		}
+	}
+
+	log.Info("found the secret", "secret", sec)
 	return ctrl.Result{}, nil
 }
-func (r *SecretReconciler) desiredSecret(s serverv1alpha1.Secret) (corev1.Secret, error) {
-	secret := corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{Namespace: s.Namespace, Name: s.Name},
-		Data: map[string][]byte{
-			"username": []byte(b64.StdEncoding.EncodeToString([]byte("foo"))),
-			"password": []byte(b64.StdEncoding.EncodeToString([]byte("bar")))},
-		StringData: nil,
+
+// createDockerSecret creates the docker pull secret for the new namespace that was created based on label
+func (r *SecretReconcile) createDockerSecret(log logr.Logger, sec serverv1alpha1.Secret, ctx context.Context, storeSecret corev1.Secret) (ctrl.Result, error) {
+	log.Info("Creating Secret", "namespace", sec.Namespace, "TargetSecretName", sec.Name)
+	newSecret := corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      TargetSecretName,
+			Namespace: sec.Namespace,
+		},
+		Type: corev1.DockerConfigKey,
+		Data: storeSecret.Data,
+	}
+	storeSecret.Type = corev1.DockerConfigKey
+	err := r.Create(ctx, &newSecret)
+	if err != nil {
+		log.Error(err, "unable to create Secret")
+		return ctrl.Result{}, err
+	}
+	if err = ctrl.SetControllerReference(&sec, &newSecret, r.Scheme); err != nil {
+		log.Error(err, "Error in setting the controller reference")
+		return ctrl.Result{}, err
 	}
 
-	ctrl.Log.Info("Secret", "s", s, "secret", secret, "scheme", r.Scheme)
-	if err := controllerutil.SetControllerReference(&s, &secret, r.Scheme); err != nil {
-		return secret, err
-	}
-	return secret, nil
+	log.Info("Created secret", "namespace", newSecret.Namespace, "TargetSecretName", newSecret.Name)
+	return ctrl.Result{}, nil
 }
-func (r *SecretReconciler) SetupWithManager(mgr ctrl.Manager) error {
+
+func (r *SecretReconcile) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&serverv1alpha1.Secret{}).
 		Owns(&corev1.Secret{}).
@@ -128,15 +139,22 @@ func (r *SecretReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			if ok {
 				return true
 			}
+
 			// Only for namespaces that have specific labels
-			ns, e := event.Object.(*corev1.Namespace)
-			if e {
-				for k, _ := range ns.Labels {
-					if k == "app.kubernetes.io/part-of" {
-						return true
-					}
-				}
+			if ns, e := event.Object.(*corev1.Namespace); e {
+				//compares the actual namespace labels
+				return reflect.DeepEqual(ns.Labels, namespaceLabels)
 			}
 			return false
 		}}).Complete(r)
+}
+
+// GetEnvDefault returns the value of the given environment variable or a
+// default value if the given environment variable is not set.
+func GetEnvDefault(variable string, defaultVal string) string {
+	envVar, exists := os.LookupEnv(variable)
+	if !exists {
+		return defaultVal
+	}
+	return envVar
 }

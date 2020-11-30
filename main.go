@@ -66,7 +66,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err = (&controllers.SecretReconciler{
+	if err = (&controllers.SecretReconcile{
 		Client: mgr.GetClient(),
 		Log:    ctrl.Log.WithName("controllers").WithName("Secret"),
 		Scheme: mgr.GetScheme(),

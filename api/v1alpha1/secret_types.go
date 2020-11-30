@@ -25,9 +25,6 @@ import (
 
 // SecretSpec defines the desired state of Secret
 type SecretSpec struct {
-	Name     string `json:"name"`
-	UserName string `json:"userName"`
-	Password string `json:"password"`
 }
 
 // SecretStatus defines the observed state of Secret
