@@ -16,9 +16,10 @@ all: manager
 
 # Run tests
 test: generate fmt vet manifests
+	- rm -rf *.out
 	mkdir -p ${ENVTEST_ASSETS_DIR}
 	test -f ${ENVTEST_ASSETS_DIR}/setup-envtest.sh || curl -sSLo ${ENVTEST_ASSETS_DIR}/setup-envtest.sh https://raw.githubusercontent.com/kubernetes-sigs/controller-runtime/master/hack/setup-envtest.sh
-	source ${ENVTEST_ASSETS_DIR}/setup-envtest.sh; fetch_envtest_tools $(ENVTEST_ASSETS_DIR); setup_envtest_env $(ENVTEST_ASSETS_DIR); go test ./... -coverprofile cover.out
+	source ${ENVTEST_ASSETS_DIR}/setup-envtest.sh; fetch_envtest_tools $(ENVTEST_ASSETS_DIR); setup_envtest_env $(ENVTEST_ASSETS_DIR); go test -race ./... -coverprofile=coverage-all.out
 
 # Build manager binary
 manager: generate fmt vet
@@ -81,3 +82,11 @@ CONTROLLER_GEN=$(GOBIN)/controller-gen
 else
 CONTROLLER_GEN=$(shell which controller-gen)
 endif
+
+
+.PHONY: test-coverage
+test-coverage:  ## Run coveralls
+	# remove all coverage files if exists
+	- rm -rf *.out
+	# run the go tests and gen the file coverage-all used to do the integration with coverrals.io
+	go test -race -failfast -tags=integration -coverprofile=coverage-all.out ./api/... ./controllers/... ./hack/...
