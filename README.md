@@ -2,6 +2,7 @@
 
 [![Build Passing](https://github.com/naveensrinivasan/k8s-namespace-operator/workflows/CI/badge.svg)](https://github.com/naveensrinivasan/k8s-namespace-operator/workflows/CI/badge.svg)
 [![Coverage Status](https://coveralls.io/repos/github/naveensrinivasan/k8s-namespace-operator/badge.svg?branch=main)](https://coveralls.io/github/naveensrinivasan/k8s-namespace-operator?branch=main)
+[![Go Report Card](https://goreportcard.com/badge/github.com/naveensrinivasan/k8s-namespace-operator)](https://goreportcard.com/report/github.com/naveensrinivasan/k8s-namespace-operator)
 
 This is code is a `k8s` `controller` which will `watch` a `namespace` with a specific label for example `app.kubernetes.io/part-of` (a label for `kubeflow`) and create a `secret`.
 
