@@ -3,6 +3,7 @@ package controllers
 import (
 	"context"
 	"fmt"
+	"os"
 	"time"
 
 	"k8s.io/apimachinery/pkg/types"
@@ -18,14 +19,16 @@ const (
 	interval = time.Millisecond * 250
 )
 
-func init() {
-
-}
-
-var _ = Describe("Notebook controller", func() {
-	MyPodNamespace := ""
+var _ = Describe("Notebook controller valid scenario", func() {
+	const MyPodNamespace = "default"
 	newNamespace := ""
+
 	Context("When validating the Namespace controller", func() {
+		It("The downward API of the namespace should have been set to ENV variable MY_POD_NAMESPACE", func() {
+			// Set the namespace where the secret would be deployed.
+			err := os.Setenv("MY_POD_NAMESPACE", MyPodNamespace)
+			Expect(err).ShouldNot(HaveOccurred())
+		})
 		It("Should create namespace", func() {
 			By("By creating a new namespace")
 			newNamespace = fmt.Sprintf("test-%s", randStringRunes(6))
@@ -38,10 +41,6 @@ var _ = Describe("Notebook controller", func() {
 				},
 			}
 			Expect(k8sClient.Create(ctx, ns)).Should(Succeed())
-		})
-		It("The downward API of the namespace should have been set to ENV variable MY_POD_NAMESPACE", func() {
-			MyPodNamespace = GetEnvDefault("MY_POD_NAMESPACE", "")
-			Expect(len(MyPodNamespace)).ShouldNot(BeZero())
 		})
 		It("It should have a secret by TargetSecretName of dockersecret", func() {
 			By("Checking for existing of the secret being present")

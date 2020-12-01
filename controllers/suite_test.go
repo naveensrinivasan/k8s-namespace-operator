@@ -20,7 +20,6 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
-	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -146,10 +145,6 @@ var _ = BeforeSuite(func(done Done) {
 	Expect(err).ToNot(HaveOccurred())
 	k8sClient = k8sManager.GetClient()
 	Expect(k8sClient).ToNot(BeNil())
-
-	// Set the namespace where the secret would be deployed.
-	err = os.Setenv("MY_POD_NAMESPACE", "default")
-	Expect(err).ShouldNot(HaveOccurred())
 
 	close(done)
 }, 60)
