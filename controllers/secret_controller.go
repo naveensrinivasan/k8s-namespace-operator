@@ -23,7 +23,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 )
 
-const TargetSecretName = "dockerpullsecret"
+const targetSecretName = "dockerpullsecret"
 
 // SecretReconcile reconciles a Secret object
 type SecretReconcile struct {
@@ -37,6 +37,7 @@ var namespaceLabels map[string]string
 
 func init() {
 	namespaceLabels = map[string]string{"inject-docker-secret": "true"}
+
 }
 
 const dockersecret = "dockersecret"
@@ -87,7 +88,7 @@ func (r *SecretReconcile) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 		}
 	}
 
-	if err := r.Get(ctx, client.ObjectKey{Name: TargetSecretName, Namespace: req.Namespace}, &storeSecret); err != nil {
+	if err := r.Get(ctx, client.ObjectKey{Name: targetSecretName, Namespace: req.Namespace}, &storeSecret); err != nil {
 		if apierrors.IsNotFound(err) {
 			result, err2 := r.createDockerSecret(log, sec, ctx, storeSecret)
 			if err2 != nil {
@@ -103,10 +104,10 @@ func (r *SecretReconcile) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 
 // createDockerSecret creates the docker pull secret for the new namespace that was created based on label
 func (r *SecretReconcile) createDockerSecret(log logr.Logger, sec serverv1alpha1.Secret, ctx context.Context, storeSecret corev1.Secret) (ctrl.Result, error) {
-	log.Info("Creating Secret", "namespace", sec.Namespace, "TargetSecretName", sec.Name)
+	log.Info("Creating Secret", "namespace", sec.Namespace, "targetSecretName", sec.Name)
 	newSecret := corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      TargetSecretName,
+			Name:      targetSecretName,
 			Namespace: sec.Namespace,
 		},
 		Type: corev1.DockerConfigKey,
@@ -123,7 +124,7 @@ func (r *SecretReconcile) createDockerSecret(log logr.Logger, sec serverv1alpha1
 		return ctrl.Result{}, err
 	}
 
-	log.Info("Created secret", "namespace", newSecret.Namespace, "TargetSecretName", newSecret.Name)
+	log.Info("Created secret", "namespace", newSecret.Namespace, "targetSecretName", newSecret.Name)
 	return ctrl.Result{}, nil
 }
 
